@@ -30,7 +30,7 @@ func verify(raw io.Reader, want string) bool {
  files:=info.UpvertedFiles()
  if len(files)==0{return false}
  fmt.Printf("PASS hash=%s name=%q files=%d\\n",want,info.BestName(),len(files))
- for _,f:=range files {fmt.Printf("  %s (%d bytes)\\n",f.DisplayPath(info),f.Length)}
+ for _,f:=range files {fmt.Printf("  %s (%d bytes)\\n",strings.Join(f.BestPath(), "/"),f.Length)}
  return true
 }
 func cache(ctx context.Context,hash string) bool {
@@ -74,7 +74,7 @@ func swarm(ctx context.Context,hash string) bool {
    files:=info.UpvertedFiles()
    if len(files)==0{return false}
    fmt.Printf("PASS DHT/TRACKER hash=%s name=%q files=%d\\n",hash,info.BestName(),len(files))
-   for _,f:=range files {fmt.Printf("  %s (%d bytes)\\n",f.DisplayPath(info),f.Length)}
+   for _,f:=range files {fmt.Printf("  %s (%d bytes)\\n",strings.Join(f.BestPath(), "/"),f.Length)}
    return true
  case <-ctx.Done():
    fmt.Printf("SWARM timeout hash=%s peers=%d err=%v\\n",hash,len(t.PeerConns()),ctx.Err())
