@@ -197,25 +197,25 @@ func ResolveTorrent(value string) error {
 								err = ctx.Err()
 								break selectLoop
 							case <-ticker.C:
-								// Report actual established peer connections without exposing addresses.
+								// Report established connections without exposing peer addresses.
 								peers := len(t.PeerConns())
 								torrentMu.Lock()
 								if metadataJobs[req.ID] == job {
 									job.state.Peers = peers
-							}
-							torrentMu.Unlock()
-						case <-t.GotInfo():
-							btpolicy.Remember(t)
-							mi := t.Metainfo()
-							var buffer bytes.Buffer
-							err = mi.Write(&buffer)
-							if buffer.Len() > torrentLimit {
-								err = errors.New("torrent too large")
-							}
-							if err == nil {
-								data = torrentPrefix + base64.StdEncoding.EncodeToString(buffer.Bytes())
-							}
-							break selectLoop
+								}
+								torrentMu.Unlock()
+							case <-t.GotInfo():
+								btpolicy.Remember(t)
+								mi := t.Metainfo()
+								var buffer bytes.Buffer
+								err = mi.Write(&buffer)
+								if buffer.Len() > torrentLimit {
+									err = errors.New("torrent too large")
+								}
+								if err == nil {
+									data = torrentPrefix + base64.StdEncoding.EncodeToString(buffer.Bytes())
+								}
+								break selectLoop
 							}
 						}
 					}
