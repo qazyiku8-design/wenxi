@@ -12,6 +12,7 @@ import (
 
  "github.com/anacrolix/torrent"
  "github.com/anacrolix/torrent/metainfo"
+ "github.com/anacrolix/torrent/storage"
 )
 
 var hashes=[]string{
@@ -81,14 +82,50 @@ func swarm(ctx context.Context,hash string) bool {
    return false
  }
 }
+func streamFirstPiece(ctx context.Context,hash string) bool {
+ cfg:=torrent.NewDefaultClientConfig()
+ cfg.DataDir=os.TempDir()
+ cfg.ListenPort=0
+ cfg.Seed=false
+ cfg.NoUpload=true
+ cfg.DisableWebtorrent=true
+ dir,e:=os.MkdirTemp("","wenxi-stream-probe-")
+ if e!=nil {fmt.Printf("TEMP ERROR: %v\\n",e);return false}
+ defer os.RemoveAll(dir)
+ cfg.DataDir=dir
+ cfg.DefaultStorage=storage.NewFileWithCompletion(dir,storage.NewMapPieceCompletion())
+ client,e:=torrent.NewClient(cfg)
+ if e!=nil {fmt.Printf("BT ERROR: %v\\n",e);return false}
+ defer client.Close()
+ t,e:=client.AddMagnet("magnet:?xt=urn:btih:"+hash)
+ if e!=nil {fmt.Printf("BT ADD ERROR: %v\\n",e);return false}
+ t.AddTrackers([][]string{{"udp://tracker.opentrackr.org:1337/announce"},{"udp://tracker.torrent.eu.org:451/announce"},{"https://tracker.gbitt.info/announce"}})
+ select { case <-t.GotInfo(): case <-ctx.Done():fmt.Printf("BT NO METADATA peers=%d\\n",len(t.PeerConns()));return false }
+ files:=t.Files()
+ if len(files)==0 {return false}
+ reader:=files[0].NewReader()
+ defer reader.Close()
+ data:=make([]byte,1)
+ n,e:=reader.ReadContext(ctx,data)
+ if n>0 {fmt.Printf("STREAM PASS hash=%s first_byte=%d peers=%d\\n",hash,data[0],len(t.PeerConns()));return true}
+ fmt.Printf("STREAM FAIL hash=%s peers=%d error=%v\\n",hash,len(t.PeerConns()),e)
+ return false
+}
 func main(){
  failures:=0
+ streaming:=os.Getenv("VERIFY_BT_STREAM")=="1"
  for _,hash:=range hashes{
   fmt.Printf("START %s\\n",hash)
   ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second)
   passed:=cache(ctx,hash)
   if !passed{passed=swarm(ctx,hash)}
   cancel()
+  if passed && streaming {
+    streamCtx,stop:=context.WithTimeout(context.Background(),90*time.Second)
+    streamed:=streamFirstPiece(streamCtx,hash)
+    stop()
+    if !streamed { failures++; fmt.Printf("FAIL STREAM hash=%s\\n",hash)}
+  }
   if !passed{failures++;fmt.Printf("FAIL hash=%s\\n",hash)}
  }
  if failures>0{fmt.Fprintf(os.Stderr,"%d magnet(s) could not be resolved\\n",failures);os.Exit(1)}
