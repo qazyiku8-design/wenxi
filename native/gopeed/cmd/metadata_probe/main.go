@@ -3,6 +3,7 @@ package main
 import (
  "context"
  "encoding/hex"
+ "bytes"
  "fmt"
  "io"
  "net/http"
@@ -82,7 +83,24 @@ func swarm(ctx context.Context,hash string) bool {
    return false
  }
 }
+func fetchTorrentBytes(ctx context.Context,hash string)([]byte,error){
+ client:=&http.Client{Timeout:8*time.Second}
+ for _,base:=range caches{
+  req,e:=http.NewRequestWithContext(ctx,"GET",base+strings.ToUpper(hash)+".torrent",nil)
+  if e!=nil{continue}
+  response,e:=client.Do(req);if e!=nil{continue}
+  if response.StatusCode!=200{response.Body.Close();continue}
+  data,e:=io.ReadAll(io.LimitReader(response.Body,4*1024*1024+1))
+  response.Body.Close()
+  if e!=nil{continue}
+  if !verify(bytes.NewReader(data),hash){continue}
+  return data,nil
+ }
+ return nil,fmt.Errorf("metadata missing: %s",hash)
+}
 func streamFirstPiece(ctx context.Context,hash string) bool {
+ encoded,er:=fetchTorrentBytes(ctx,hash)
+ if er!=nil {fmt.Printf("STREAM CACHE FAIL: %v\\n",er);return false}
  cfg:=torrent.NewDefaultClientConfig()
  cfg.DataDir=os.TempDir()
  cfg.ListenPort=0
@@ -97,7 +115,9 @@ func streamFirstPiece(ctx context.Context,hash string) bool {
  client,e:=torrent.NewClient(cfg)
  if e!=nil {fmt.Printf("BT ERROR: %v\\n",e);return false}
  defer client.Close()
- t,e:=client.AddMagnet("magnet:?xt=urn:btih:"+hash)
+ mi,e:=metainfo.Load(bytes.NewReader(encoded))
+ if e!=nil {fmt.Printf("STREAM META ERROR: %v\\n",e);return false}
+ t,e:=client.AddTorrent(mi)
  if e!=nil {fmt.Printf("BT ADD ERROR: %v\\n",e);return false}
  t.AddTrackers([][]string{{"udp://tracker.opentrackr.org:1337/announce"},{"udp://tracker.torrent.eu.org:451/announce"},{"https://tracker.gbitt.info/announce"}})
  select { case <-t.GotInfo(): case <-ctx.Done():fmt.Printf("BT NO METADATA peers=%d\\n",len(t.PeerConns()));return false }
