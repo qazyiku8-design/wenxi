@@ -14,8 +14,6 @@ jobs:
   checks:
     uses: ./.github/workflows/checks.yml
   build:
-    needs: checks
-    if: always()
     runs-on: windows-2022
     timeout-minutes: 60
     strategy:
