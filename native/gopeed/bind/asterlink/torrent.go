@@ -122,21 +122,36 @@ func parseTorrent(data string) (*metainfo.MetaInfo, *torrentInfo, error) {
 // fetchCachedTorrent consults public metadata caches only for an explicitly
 // requested fallback. The returned bytes must match the requested infohash.
 func fetchCachedTorrent(ctx context.Context, hash string) (string, error) {
- client := &http.Client{Timeout: 12 * time.Second}
- for _, base := range []string{"https://itorrents.org/torrent/", "https://btcache.me/torrent/", "https://torrentcache.top/torrent/"} {
-  request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+strings.ToUpper(hash)+".torrent", nil)
-  if err != nil { continue }
-  response, err := client.Do(request)
-  if err != nil { continue }
-  if response.StatusCode != http.StatusOK { response.Body.Close(); continue }
-  body, readErr := io.ReadAll(io.LimitReader(response.Body, torrentLimit+1))
-  response.Body.Close()
-  if readErr != nil || len(body)==0 || len(body)>torrentLimit { continue }
-  encoded := torrentPrefix+base64.StdEncoding.EncodeToString(body)
-  _, info, err := parseTorrent(encoded)
-  if err==nil && strings.EqualFold(info.Hash, hash) { return encoded, nil }
- }
- return "", errors.New("no matching cached metadata")
+    bases := []string{"https://itorrents.org/torrent/", "https://btcache.me/torrent/", "https://torrentcache.top/torrent/"}
+    ctx, cancel := context.WithCancel(ctx)
+    defer cancel()
+    results := make(chan string, len(bases))
+    client := &http.Client{Timeout: 8 * time.Second}
+    for _, base := range bases {
+        go func(base string) {
+            request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+strings.ToUpper(hash)+".torrent", nil)
+            if err != nil { results <- ""; return }
+            response, err := client.Do(request)
+            if err != nil { results <- ""; return }
+            defer response.Body.Close()
+            if response.StatusCode != http.StatusOK { results <- ""; return }
+            body, err := io.ReadAll(io.LimitReader(response.Body, torrentLimit+1))
+            if err != nil || len(body)==0 || len(body)>torrentLimit { results <- ""; return }
+            value := torrentPrefix+base64.StdEncoding.EncodeToString(body)
+            _, info, err := parseTorrent(value)
+            if err == nil && strings.EqualFold(info.Hash,hash) { results <- value; return }
+            results <- ""
+        }(base)
+    }
+    for range bases {
+        select {
+        case result := <-results:
+            if result!="" { return result,nil }
+        case <-ctx.Done():
+            return "",ctx.Err()
+        }
+    }
+    return "",errors.New("no matching cached metadata")
 }
 
 // ResolveTorrent starts a cancellable metadata-only operation. A magnet link
@@ -216,9 +231,6 @@ func ResolveTorrent(value string) error {
                             cached := make(chan string,1)
                             cacheResult = cached
                             go func() {
-                                timer := time.NewTimer(15*time.Second)
-                                defer timer.Stop()
-                                select { case <-timer.C: case <-ctx.Done(): return }
                                 u, _ := url.Parse(req.URL)
                                 hash := strings.TrimPrefix(strings.ToLower(u.Query().Get("xt")), "urn:btih:")
                                 value, _ := fetchCachedTorrent(ctx,hash)
