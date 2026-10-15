@@ -4,6 +4,8 @@ on:
     branches: [main, master]
     paths:
       - native/gopeed/cmd/metadata_probe/**
+      - native/gopeed/bind/asterlink/torrent_metadata_live_test.go
+      - native/gopeed/bind/asterlink/torrent.go
       - .github/workflows/magnet-verification.yml
   workflow_dispatch:
 permissions:
@@ -23,3 +25,6 @@ jobs:
       - name: Validate both real infohashes and metadata file lists
         working-directory: native/gopeed
         run: go run -mod=vendor ./cmd/metadata_probe
+      - name: Confirm both hashes using Wenxi native production parser
+        working-directory: native/gopeed
+        run: go test -mod=vendor -tags nosqlite -ldflags=-checklinkname=0 ./bind/asterlink -run '^TestRealMagnetMetadata$' -v -count=1 -timeout=8m
