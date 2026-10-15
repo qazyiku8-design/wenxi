@@ -54,6 +54,16 @@ class TorrentSession extends ChangeNotifier {
           notifyListeners();
           return;
         }
+        if (result.str('status') == 'resolving') {
+          final peers = result.integer('peers');
+          final nextStage = peers > 0
+              ? '已连接 $peers 个 BT 节点，正在获取文件列表…'
+              : '尚未连接到 BT 节点，正在通过 DHT/Tracker 搜索…';
+          if (stage != nextStage) {
+            stage = nextStage;
+            notifyListeners();
+          }
+        }
         if (result.str('status') == 'error') {
           throw AppException(result.str('error').ifEmpty('种子解析失败'));
         }
