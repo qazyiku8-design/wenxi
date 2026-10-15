@@ -38,7 +38,7 @@ func cache(ctx context.Context,hash string) bool {
  for _,base:=range caches {
   req,e:=http.NewRequestWithContext(ctx,"GET",base+strings.ToUpper(hash)+".torrent",nil);if e!=nil{continue}
   resp,e:=client.Do(req);if e!=nil{fmt.Printf("CACHE error %s: %v\\n",base,e);continue}
-  if resp.StatusCode==200 && verify(resp.Body,hash){resp.Body.Close();return true}
+  if resp.StatusCode==200 && verify(resp.Body,hash){fmt.Printf("CACHE HIT %s\\n",base);resp.Body.Close();return true}
   fmt.Printf("CACHE %s HTTP %d\\n",base,resp.StatusCode)
   resp.Body.Close()
  }
