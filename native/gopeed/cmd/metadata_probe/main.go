@@ -7,6 +7,8 @@ import (
  "fmt"
  "io"
  "net/http"
+ "net"
+ "net/url"
  "os"
  "strings"
  "time"
@@ -98,6 +100,25 @@ func fetchTorrentBytes(ctx context.Context,hash string)([]byte,error){
  }
  return nil,fmt.Errorf("metadata missing: %s",hash)
 }
+func diagnoseConnectivity(ctx context.Context) {
+ fmt.Println("DIAGNOSTIC: DNS/UDP/TCP tracker connectivity")
+ endpoints:=[]string{"tracker.opentrackr.org:1337","tracker.torrent.eu.org:451","open.stealth.si:80"}
+ for _,ep:=range endpoints{
+  host,_,_:=net.SplitHostPort(ep)
+  addrs,err:=net.DefaultResolver.LookupIPAddr(ctx,host)
+  fmt.Printf("TRACKER %s dns=%v count=%d\\n",ep,err,len(addrs))
+  dialer:=net.Dialer{Timeout:3*time.Second}
+  c,err:=dialer.DialContext(ctx,"udp",ep)
+  if err!=nil{fmt.Printf("UDP %s dial=%v\\n",ep,err);continue}
+  _,err=c.Write([]byte{0,0,0,0,0,0,0,0})
+  fmt.Printf("UDP %s write=%v\\n",ep,err)
+  c.Close()
+ }
+ u,_:=url.Parse("https://tracker.gbitt.info/announce")
+ req,_:=http.NewRequestWithContext(ctx,"HEAD",u.String(),nil)
+ res,err:=(&http.Client{Timeout:5*time.Second}).Do(req)
+ if err!=nil{fmt.Printf("HTTPS TRACKER err=%v\\n",err)}else{fmt.Printf("HTTPS TRACKER status=%d\\n",res.StatusCode);res.Body.Close()}
+}
 func streamFirstPiece(ctx context.Context,hash string) bool {
  encoded,er:=fetchTorrentBytes(ctx,hash)
  if er!=nil {fmt.Printf("STREAM CACHE FAIL: %v\\n",er);return false}
@@ -134,6 +155,7 @@ func streamFirstPiece(ctx context.Context,hash string) bool {
 func main(){
  failures:=0
  streaming:=os.Getenv("VERIFY_BT_STREAM")=="1"
+ if streaming {diagCtx,stop:=context.WithTimeout(context.Background(),12*time.Second);diagnoseConnectivity(diagCtx);stop()}
  for _,hash:=range hashes{
   fmt.Printf("START %s\\n",hash)
   ctx,cancel:=context.WithTimeout(context.Background(),150*time.Second)
