@@ -44,7 +44,7 @@ class TorrentSession extends ChangeNotifier {
       if (_closed) return;
       stage = value.startsWith('magnet:') ? '正在连接做种者获取文件列表…' : '正在解析种子文件…';
       notifyListeners();
-      await engine.torrentCall('torrentResolve', {'id': id, 'url': value});
+      await engine.torrentCall('torrentResolve', {'id': id, 'url': value, 'publicFallback': value.startsWith('magnet:')});
       while (!_closed) {
         final result = await engine.torrentCall('torrentMetadata', {'id': id});
         if (_closed) return;
