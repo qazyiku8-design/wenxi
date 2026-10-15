@@ -190,18 +190,18 @@ func ResolveTorrent(value string) error {
 						btpolicy.Restore(t)
 						ticker := time.NewTicker(time.Second)
 						defer ticker.Stop()
-						selectLoop:
+					selectLoop:
 						for {
-						select {
-						case <-ctx.Done():
-							err = ctx.Err()
-							break selectLoop
-						case <-ticker.C:
-							// Report actual established peer connections without exposing addresses.
-							peers := len(t.PeerConns())
-							torrentMu.Lock()
-							if metadataJobs[req.ID] == job {
-								job.state.Peers = peers
+							select {
+							case <-ctx.Done():
+								err = ctx.Err()
+								break selectLoop
+							case <-ticker.C:
+								// Report actual established peer connections without exposing addresses.
+								peers := len(t.PeerConns())
+								torrentMu.Lock()
+								if metadataJobs[req.ID] == job {
+									job.state.Peers = peers
 							}
 							torrentMu.Unlock()
 						case <-t.GotInfo():
@@ -216,9 +216,9 @@ func ResolveTorrent(value string) error {
 								data = torrentPrefix + base64.StdEncoding.EncodeToString(buffer.Bytes())
 							}
 							break selectLoop
+							}
 						}
-						}
-						}
+					}
 					client.Close()
 				}
 			}
