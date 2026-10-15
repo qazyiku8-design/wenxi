@@ -28,3 +28,8 @@ jobs:
       - name: Confirm both hashes using Wenxi native production parser
         working-directory: native/gopeed
         run: go test -mod=vendor -tags nosqlite -ldflags=-checklinkname=0 ./bind/asterlink -run '^TestRealMagnetMetadata$' -v -count=1 -timeout=8m
+      - name: Verify real BT streaming delivers first byte for both magnets
+        working-directory: native/gopeed
+        env:
+          VERIFY_BT_STREAM: '1'
+        run: go run -mod=vendor ./cmd/metadata_probe
