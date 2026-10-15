@@ -48,6 +48,7 @@ type torrentInfo struct {
 }
 type metadataState struct {
 	Status string       `json:"status"`
+	Peers  int          `json:"peers,omitempty"`
 	Error  string       `json:"error,omitempty"`
 	Info   *torrentInfo `json:"info,omitempty"`
 }
@@ -187,9 +188,22 @@ func ResolveTorrent(value string) error {
 					t, err = client.AddMagnet(req.URL)
 					if err == nil {
 						btpolicy.Restore(t)
+						ticker := time.NewTicker(time.Second)
+						defer ticker.Stop()
+						selectLoop:
+						for {
 						select {
 						case <-ctx.Done():
 							err = ctx.Err()
+							break selectLoop
+						case <-ticker.C:
+							// Report actual established peer connections without exposing addresses.
+							peers := len(t.PeerConns())
+							torrentMu.Lock()
+							if metadataJobs[req.ID] == job {
+								job.state.Peers = peers
+							}
+							torrentMu.Unlock()
 						case <-t.GotInfo():
 							btpolicy.Remember(t)
 							mi := t.Metainfo()
@@ -201,8 +215,10 @@ func ResolveTorrent(value string) error {
 							if err == nil {
 								data = torrentPrefix + base64.StdEncoding.EncodeToString(buffer.Bytes())
 							}
+							break selectLoop
 						}
-					}
+						}
+						}
 					client.Close()
 				}
 			}
