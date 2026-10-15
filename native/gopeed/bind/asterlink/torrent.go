@@ -124,7 +124,7 @@ func parseTorrent(data string) (*metainfo.MetaInfo, *torrentInfo, error) {
 func fetchCachedTorrent(ctx context.Context, hash string) (string, error) {
  client := &http.Client{Timeout: 12 * time.Second}
  for _, base := range []string{"https://itorrents.org/torrent/", "https://btcache.me/torrent/", "https://torrentcache.top/torrent/"} {
-  request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+hash+".torrent", nil)
+  request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+strings.ToUpper(hash)+".torrent", nil)
   if err != nil { continue }
   response, err := client.Do(request)
   if err != nil { continue }
