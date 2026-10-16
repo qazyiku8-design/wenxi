@@ -1,0 +1,35 @@
+name: Verify required magnet metadata
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - native/gopeed/cmd/metadata_probe/**
+      - native/gopeed/bind/asterlink/torrent_metadata_live_test.go
+      - native/gopeed/bind/asterlink/torrent.go
+      - .github/workflows/magnet-verification.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  two-magnets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.24.7'
+          cache: false
+      - name: Validate both real infohashes and metadata file lists
+        working-directory: native/gopeed
+        run: go run -mod=vendor ./cmd/metadata_probe
+      - name: Confirm both hashes using Wenxi native production parser
+        working-directory: native/gopeed
+        run: go test -mod=vendor -tags nosqlite -ldflags=-checklinkname=0 ./bind/asterlink -run '^TestRealMagnetMetadata$' -v -count=1 -timeout=8m
+      - name: Verify real BT streaming delivers first byte for both magnets
+        working-directory: native/gopeed
+        env:
+          VERIFY_BT_STREAM: '1'
+        run: go run -mod=vendor ./cmd/metadata_probe

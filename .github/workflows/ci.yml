@@ -8,13 +8,12 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.sha }}
   cancel-in-progress: true
 jobs:
   checks:
     uses: ./.github/workflows/checks.yml
   build:
-    needs: checks
     runs-on: windows-2022
     timeout-minutes: 60
     strategy:
@@ -22,7 +21,7 @@ jobs:
       matrix:
         target: [android, windows]
     env:
-      PUB_HOSTED_URL: https://pub.dev
+      PUB_HOSTED_URL: https://pub.flutter-io.cn
       FLUTTER_STORAGE_BASE_URL: https://storage.googleapis.com
       GOPROXY: https://proxy.golang.org,direct
       GOTOOLCHAIN: go1.24.7
@@ -49,6 +48,26 @@ jobs:
           ./tool/build-android.ps1 -BuildConfig config/build.community.json -Unsigned
           python tool/verify_apk.py --apk build/app/outputs/flutter-apk/app-release.apk --sdk $env:ANDROID_HOME --unsigned --application-id com.asterlink.app.community --umeng-channel community --output .local/ci-apk-inspection.json
           if ($LASTEXITCODE -ne 0) { throw 'APK inspection failed.' }
+      - name: Sign community diagnostic APK with disposable key
+        if: matrix.target == 'android'
+        run: |
+          $key = Join-Path $env:RUNNER_TEMP 'community-diagnostic.p12'
+          $password = [guid]::NewGuid().ToString('N')
+          & keytool -genkeypair -noprompt -keystore $key -storetype PKCS12 -storepass $password -keypass $password -alias community -keyalg RSA -keysize 3072 -validity 365 -dname 'CN=Community Diagnostic, O=Wenxi, C=US'
+          if ($LASTEXITCODE -ne 0) { throw 'Temporary signing key generation failed.' }
+          $apksigner = Join-Path $env:ANDROID_HOME 'build-tools/36.0.0/apksigner.bat'
+          & $apksigner sign --ks $key --ks-key-alias community --ks-pass "pass:$password" --key-pass "pass:$password" --out build/app/outputs/flutter-apk/wenxi-community-signed.apk build/app/outputs/flutter-apk/app-release.apk
+          if ($LASTEXITCODE -ne 0) { throw 'Signing failed.' }
+          & $apksigner verify --verbose build/app/outputs/flutter-apk/wenxi-community-signed.apk
+          if ($LASTEXITCODE -ne 0) { throw 'Signed APK verification failed.' }
+      - name: Upload community Android APK
+        if: matrix.target == 'android'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: wenxi-bt-diagnostic-arm64
+          path: build/app/outputs/flutter-apk/wenxi-community-signed.apk
+          if-no-files-found: error
+          retention-days: 14
       - name: Test Android release code
         if: matrix.target == 'android'
         env:

@@ -44,7 +44,7 @@ class TorrentSession extends ChangeNotifier {
       if (_closed) return;
       stage = value.startsWith('magnet:') ? '正在连接做种者获取文件列表…' : '正在解析种子文件…';
       notifyListeners();
-      await engine.torrentCall('torrentResolve', {'id': id, 'url': value});
+      await engine.torrentCall('torrentResolve', {'id': id, 'url': value, 'publicFallback': value.startsWith('magnet:')});
       while (!_closed) {
         final result = await engine.torrentCall('torrentMetadata', {'id': id});
         if (_closed) return;
@@ -53,6 +53,16 @@ class TorrentSession extends ChangeNotifier {
           stage = '';
           notifyListeners();
           return;
+        }
+        if (result.str('status') == 'resolving') {
+          final peers = result.integer('peers');
+          final nextStage = peers > 0
+              ? '已连接 $peers 个 BT 节点，正在获取文件列表…'
+              : '尚未连接到 BT 节点，正在通过 DHT/Tracker 搜索…';
+          if (stage != nextStage) {
+            stage = nextStage;
+            notifyListeners();
+          }
         }
         if (result.str('status') == 'error') {
           throw AppException(result.str('error').ifEmpty('种子解析失败'));

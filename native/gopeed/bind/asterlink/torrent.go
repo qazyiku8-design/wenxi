@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -48,6 +50,7 @@ type torrentInfo struct {
 }
 type metadataState struct {
 	Status string       `json:"status"`
+	Peers  int          `json:"peers,omitempty"`
 	Error  string       `json:"error,omitempty"`
 	Info   *torrentInfo `json:"info,omitempty"`
 }
@@ -116,12 +119,48 @@ func parseTorrent(data string) (*metainfo.MetaInfo, *torrentInfo, error) {
 	return mi, result, nil
 }
 
+// fetchCachedTorrent consults public metadata caches only for an explicitly
+// requested fallback. The returned bytes must match the requested infohash.
+func fetchCachedTorrent(ctx context.Context, hash string) (string, error) {
+    bases := []string{"https://itorrents.org/torrent/", "https://btcache.me/torrent/", "https://torrentcache.top/torrent/"}
+    ctx, cancel := context.WithCancel(ctx)
+    defer cancel()
+    results := make(chan string, len(bases))
+    client := &http.Client{Timeout: 8 * time.Second}
+    for _, base := range bases {
+        go func(base string) {
+            request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+strings.ToUpper(hash)+".torrent", nil)
+            if err != nil { results <- ""; return }
+            response, err := client.Do(request)
+            if err != nil { results <- ""; return }
+            defer response.Body.Close()
+            if response.StatusCode != http.StatusOK { results <- ""; return }
+            body, err := io.ReadAll(io.LimitReader(response.Body, torrentLimit+1))
+            if err != nil || len(body)==0 || len(body)>torrentLimit { results <- ""; return }
+            value := torrentPrefix+base64.StdEncoding.EncodeToString(body)
+            _, info, err := parseTorrent(value)
+            if err == nil && strings.EqualFold(info.Hash,hash) { results <- value; return }
+            results <- ""
+        }(base)
+    }
+    for range bases {
+        select {
+        case result := <-results:
+            if result!="" { return result,nil }
+        case <-ctx.Done():
+            return "",ctx.Err()
+        }
+    }
+    return "",errors.New("no matching cached metadata")
+}
+
 // ResolveTorrent starts a cancellable metadata-only operation. A magnet link
 // does not select pieces; local .torrent input does not need a network client.
 func ResolveTorrent(value string) error {
 	var req struct {
 		ID  string `json:"id"`
 		URL string `json:"url"`
+		PublicFallback bool `json:"publicFallback"`
 	}
 	if json.Unmarshal([]byte(value), &req) != nil || !safeID.MatchString(req.ID) {
 		return errors.New("invalid torrent request")
@@ -187,19 +226,48 @@ func ResolveTorrent(value string) error {
 					t, err = client.AddMagnet(req.URL)
 					if err == nil {
 						btpolicy.Restore(t)
-						select {
-						case <-ctx.Done():
-							err = ctx.Err()
-						case <-t.GotInfo():
-							btpolicy.Remember(t)
-							mi := t.Metainfo()
-							var buffer bytes.Buffer
-							err = mi.Write(&buffer)
-							if buffer.Len() > torrentLimit {
-								err = errors.New("torrent too large")
-							}
-							if err == nil {
-								data = torrentPrefix + base64.StdEncoding.EncodeToString(buffer.Bytes())
+                        var cacheResult <-chan string
+                        if req.PublicFallback {
+                            cached := make(chan string,1)
+                            cacheResult = cached
+                            go func() {
+                                u, _ := url.Parse(req.URL)
+                                hash := strings.TrimPrefix(strings.ToLower(u.Query().Get("xt")), "urn:btih:")
+                                value, _ := fetchCachedTorrent(ctx,hash)
+                                select { case cached <- value: case <-ctx.Done(): }
+                            }()
+                        }
+                        ticker := time.NewTicker(time.Second)
+						defer ticker.Stop()
+					selectLoop:
+						for {
+							select {
+							case <-ctx.Done():
+								err = ctx.Err()
+								break selectLoop
+							case <-ticker.C:
+								// Report established connections without exposing peer addresses.
+								peers := len(t.PeerConns())
+								torrentMu.Lock()
+								if metadataJobs[req.ID] == job {
+									job.state.Peers = peers
+								}
+								torrentMu.Unlock()
+							case value := <-cacheResult:
+                                cacheResult = nil
+                                if value != "" { data=value; break selectLoop }
+                            case <-t.GotInfo():
+								btpolicy.Remember(t)
+								mi := t.Metainfo()
+								var buffer bytes.Buffer
+								err = mi.Write(&buffer)
+								if buffer.Len() > torrentLimit {
+									err = errors.New("torrent too large")
+								}
+								if err == nil {
+									data = torrentPrefix + base64.StdEncoding.EncodeToString(buffer.Bytes())
+								}
+								break selectLoop
 							}
 						}
 					}
