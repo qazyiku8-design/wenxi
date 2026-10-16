@@ -1,0 +1,67 @@
+name: Libtorrent playback comparison
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - .github/workflows/libtorrent-comparison.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
+    steps:
+      - name: Install independent mature BT engine
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-libtorrent
+      - name: Verify first verified video piece with libtorrent
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import libtorrent as lt, time, sys
+          magnets=[
+              ("e23eadbaf23e8e9be501cfe726796166c7f790ae","ROE-369"),
+              ("432537477ba993225deba184dd61d65b8e3b64ed","IPX-964C"),
+          ]
+          failed=0
+          for h,name in magnets:
+              settings={"listen_interfaces":"0.0.0.0:0","enable_dht":True,"enable_lsd":False,"enable_upnp":False,"enable_natpmp":False}
+              ses=lt.session(settings)
+              for node in [("router.bittorrent.com",6881),("dht.transmissionbt.com",6881),("router.utorrent.com",6881)]:
+                  try:ses.add_dht_router(*node)
+                  except Exception as e:print("bootstrap error",e,flush=True)
+              params={"save_path":"/tmp","storage_mode":lt.storage_mode_t.storage_mode_sparse,"flags":lt.torrent_flags.upload_mode}
+              t=lt.add_magnet_uri(ses,"magnet:?xt=urn:btih:"+h,params)
+              for tracker in ["udp://tracker.opentrackr.org:1337/announce","udp://tracker.torrent.eu.org:451/announce","udp://open.stealth.si:80/announce","https://tracker.openbittorrent.com:443/announce"]:
+                  t.add_tracker({"url":tracker})
+              deadline=time.monotonic()+110
+              metainfo=False
+              while time.monotonic()<deadline:
+                  st=t.status()
+                  if st.has_metadata:
+                      info=t.get_torrent_info()
+                      print("METADATA",h,"files",info.num_files(),flush=True)
+                      fs=info.files()
+                      video=next((i for i in range(info.num_files()) if fs.file_path(i).lower().endswith(".mp4")),None)
+                      if video is None:break
+                      priorities=[0]*info.num_files()
+                      priorities[video]=1
+                      t.prioritize_files(priorities)
+                      t.set_upload_mode(False)
+                      t.set_piece_deadline(info.map_file(video,0,1).piece,0)
+                      metainfo=True
+                  if metainfo:
+                      st=t.status()
+                      if st.total_wanted_done>0 or st.total_done>0:
+                          print("PIECE DATA AVAILABLE",h,"bytes",st.total_done,flush=True)
+                          break
+                  time.sleep(2)
+              else:
+                  print("TIMEOUT",h,"peers",t.status().num_peers,"has_metadata",t.status().has_metadata,flush=True)
+                  failed+=1
+                  continue
+              if not metainfo:failed+=1
+              ses.remove_torrent(t)
+          sys.exit(1 if failed else 0)
+          PY
